@@ -4,11 +4,11 @@
 #include <avr/pgmspace.h>
 
 // SD card
-const int chipSelect = 4;
+const int chipSelect = 5;
 // GPS Serial
 const int gpsRX = 8, gpsTX = 9; //fixed assignment by AltSoftSerial
 // LCD SPI
-const int lcdCLK = 13, lcdDI = 11, lcdDO = 12, lcdCS = 3, lcdRST = 2;
+const int lcdCLK = 3, lcdDI = 4, lcdDC = 7, lcdCS = 6, lcdRST = 2;
 
 // *** functions *********************************************************
 
@@ -118,7 +118,7 @@ inline void setup_gpserial(AltSoftSerial &gpSerial) {
 
 // *** glocal objects ***************************************************
 
-LCD5110 lcd(lcdCLK,lcdDI,lcdDO,lcdRST,lcdCS);
+LCD5110 lcd(lcdCLK,lcdDI,lcdDC,lcdRST,lcdCS);
 //Adafruit_PCD8544 display = Adafruit_PCD8544(lcdCLK, lcdDI, lcdDO, lcdCS, lcdRST);
 AltSoftSerial gpSerial;
 SdFat sd;
@@ -149,6 +149,10 @@ void setup() {
   Serial.begin(115200);
   Serial.println(F("LocLog v. 0.2 starting..."));
 
+  lcd.InitLCD();
+  lcd.setFont(SmallFont);
+  lcd.print("Starting...", LEFT, 0);
+
   // initialize the SD card at SPI_HALF_SPEED to avoid bus errors with
   // breadboards.  use SPI_FULL_SPEED for better performance.
   if (sd.begin(chipSelect, SPI_HALF_SPEED))
@@ -157,21 +161,12 @@ void setup() {
     sd.initErrorHalt();
   pinMode(10,OUTPUT);
 
-  //  display.begin();
-  //  display.setContrast(60);
-  //  display.display(); // show splashscreen
-
-  lcd.InitLCD();
-  lcd.setFont(SmallFont);
-
-  //  print_lcd("LocLog\nstarting...");
-
   setup_gpserial(gpSerial);
 
   print_free_ram();
 
   Serial.println(F("LocLog startup completed."));
-  //  print_lcd("LocLog\nstarted.");
+
   // finished
   delay(1000);
 
@@ -182,6 +177,9 @@ void setup() {
 void loop() // run over and over
 {
 
+  if (digitalRead(5) == LOW) {
+    Serial.println("********");
+  }
   if (gpSerial.available()) {
     c = gpSerial.read();
     bytes_read++;
@@ -210,11 +208,11 @@ void loop() // run over and over
       }
       sentences_all++;
 
-      //Serial.print(nmea_sentence);
+      Serial.print(nmea_sentence);
       sdout << nmea_sentence.c_str();
       sdout.flush();
 
-      if (sentences_all % 25 == 0) {
+      if (sentences_all % 50 == 0) {
         SdFile file;
         file.open(logfile_name, O_RDWR);
         bytes_written = file.fileSize();
@@ -229,17 +227,19 @@ void loop() // run over and over
         Serial.print("/");
         Serial.print(bytes_written);
         Serial.println("");
-//        
-//        char buffer[16];
-//        lcd.clrScr();
-//        sprintf(buffer, "OK:   %6i", sentences_valid);
-//        lcd.print(buffer, LEFT, 0);
-//        sprintf(buffer, "BAD:  %6i", sentences_invalid);
-//        lcd.print(buffer, LEFT, 8);       
-//        sprintf(buffer, "READ: %6ik", bytes_read/1024);
-//        lcd.print(buffer, LEFT, 24);       
-//        sprintf(buffer, "WRITE:%6ik", bytes_written/1024);
-//        lcd.print(buffer, LEFT, 32);       
+        
+        char buffer[16];
+        lcd.clrScr();
+        sprintf(buffer, "OK:   %6i", sentences_valid);
+        lcd.print(buffer, LEFT, 0);
+        sprintf(buffer, "BAD:  %6i", sentences_invalid);
+        lcd.print(buffer, LEFT, 8);       
+        sprintf(buffer, "READ: %6ik", bytes_read/1024);
+        lcd.print(buffer, LEFT, 16);       
+        sprintf(buffer, "WRITE:%6ik", bytes_written/1024);
+        lcd.print(buffer, LEFT, 24);   
+        sprintf(buffer, "RUN:  %6is", millis()/1000);    
+        lcd.print(buffer, LEFT, 32);   
 
 
       }
