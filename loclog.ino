@@ -3,8 +3,9 @@
 #include <avr/pgmspace.h>
 
 // *** glocal objects ***************************************************
+// TODO: Parameter auf SD-Karte speichern
 
-const int GPS_RATE = 5; // 1, 5, 10
+const int GPS_RATE = 1; // 1, 5, 10
 const int DEBUG_RAM = 0; // 1, 0
 
 // *** glocal objects ***************************************************
@@ -25,15 +26,6 @@ void print_free_ram() {
   }
 }
 
-SIGNAL(TIMER0_COMPA_vect) {
-  //  if (gpSerial.available()) {
-  //    int c = gpSerial.read();
-  //    if (c) {
-  //      UDR0 = c;  
-  //    }
-  //  }
-}
-
 void useInterrupt(boolean v) {
   if (v) {
     // Timer0 is already used for millis() - we'll just interrupt somewhere
@@ -47,27 +39,12 @@ void useInterrupt(boolean v) {
   }
 }
 
-inline ofstream sd_open_new_logfile(SdFat &sd, char *logfile_name) {
-  uint8_t lognr = 0;
-  while (lognr == 0 || sd.exists(logfile_name))  {
-    lognr++;
-    sprintf(logfile_name, "log%05i.txt", lognr);
-  }
-
-  Serial.print(F("LocLog: "));
-  Serial.print(F("Open file "));
-  Serial.print(logfile_name);
-  Serial.println(F(" for logging."));
-
-  return ofstream(logfile_name, ios::out | ios::app);
-}
-
-inline void sd_open_new_logfile2(SdFat &sd, char *logfile_name) {
+inline void sd_get_new_logfile(SdFat &sd, char *logfile_name) {
   SdFile f;
   uint8_t lognr = 0;
   while (lognr == 0 || sd.exists(logfile_name))  {
     lognr++;
-    sprintf(logfile_name, "log%05i.txt", lognr);
+    sprintf(logfile_name, "log%05i.nmea", lognr);
   }
 
   Serial.print(F("LocLog: "));
@@ -171,7 +148,7 @@ void setup() {
 
   Serial.begin(57600*2);
   Serial.print(F("LocLog: "));
-  Serial.println(F("LocLog v. 1.0 starting..."));
+  Serial.println(F("LocLog v. 1.1 starting..."));
 
   // enable GPS chip
   pinMode(2, OUTPUT);
@@ -181,18 +158,12 @@ void setup() {
   // initialize the SD card at SPI_HALF_SPEED to avoid bus errors with
   // breadboards.  use SPI_FULL_SPEED for better performance.
   if (sd.begin(10, SPI_FULL_SPEED)) {
-//    sdout = sd_open_new_logfile(sd,logfile_name);
-    sd_open_new_logfile2(sd,logfile_name);
-    if (!file.open(logfile_name, O_RDWR | O_CREAT | O_AT_END)) {
-      Serial.print(F("LocLog: "));
-      Serial.println(F("Could not write to SD CARD. Logging disabled."));
-    } else {
-      hasSDCard = true;
-    }
+    hasSDCard = true;
   } else {
     //sd.initErrorHalt();
     Serial.print(F("LocLog: "));
     Serial.println(F("No SD CARD. Logging disabled!"));
+    hasSDCard = false;
   }
   pinMode(10, OUTPUT);
 
@@ -241,13 +212,35 @@ void loop() // run over and over
       sentences_all++;
 
       // write this sentence to bluetooth and sd card
-      //TODO: do not write everything to BT
       Serial.print(nmea_sentence);
-      if (hasSDCard) {
-        sdout << nmea_sentence;
-        sdout.flush();
+      if (!nmea_sentence.startsWith("$GPGSV") && hasSDCard) {
+        if (!isLogging) {
+          int date_stop = nmea_sentence.lastIndexOf(',', nmea_sentence.lastIndexOf(',', nmea_sentence.lastIndexOf(',')-1)-1);
+          if (nmea_sentence[date_stop-2] == '1') {
+            String date = nmea_sentence.substring(date_stop-2, date_stop);
+            date = date + nmea_sentence.substring(date_stop-4, date_stop-2);
+            date = date + nmea_sentence.substring(date_stop-6, date_stop-4);
+            date = date + nmea_sentence.substring(7, 9);
+            date = date + ".nme";
+            date.toCharArray(logfile_name, 13);
+                          Serial.print("File:");
+                          Serial.print(logfile_name);
+            if (!file.open(logfile_name, O_RDWR | O_CREAT | O_AT_END)) {
+              Serial.print(F("LocLog: "));
+              Serial.println(F("Could not write to SD CARD. Logging disabled."));
+              hasSDCard = false;
+            } else {
+              Serial.print(F("LocLog: "));
+              Serial.print(F("Open file "));
+              Serial.print(logfile_name);
+              Serial.println(F(" for logging."));
+              isLogging = true;
+            }
+          }          
+        } else {
+          file.print(nmea_sentence);
+        }
       }
-
       nmea_sentence = "";
       break;
     default:
@@ -267,29 +260,8 @@ void loop() // run over and over
     }
   }
   
-  while (Serial.available()) {
-    c = Serial.read();
-        Serial.print("LocLog: c = ");
-        Serial.println(c);
-    switch (c) {
-      case '\n':
-        Serial.print("LocLog: Command = ");
-        Serial.println(command);
-        if (command.startsWith("ls")) {
-          command_directory_listing(&sd);
-        } else if (command.startsWith("get ")) {
-          command_retrieve_log(&sd, command.substring(4).c_str());
-        }
-        command = "";
-        break;
-      default:
-        command += c;
-        break;
-    }
-  }
-
   // periodic stats
-  if (millis() - timer > 60000) {
+  if (millis() - timer > 10000) {
     Serial.print(F("LocLog: "));
     Serial.print(F("valid "));
     Serial.print(sentences_valid);
@@ -299,7 +271,10 @@ void loop() // run over and over
     Serial.print(bytes_read);
     Serial.print(F(" / bytes w"));
     Serial.println(bytes_written);
-
+    if (hasSDCard) {
+      // has to be called periodically, otherwise data is not accessible on SD card
+      file.sync();  
+    }
     timer = millis();
   }
 }
